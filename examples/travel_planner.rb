@@ -22,7 +22,8 @@ options = {
   min_activities: 4,
   max_activities: 6,
   strict: false,
-  targeted_retries: true
+  targeted_retries: true,
+  timeout: 300 # Default to 5 minutes
 }
 
 # Parse command line arguments
@@ -80,6 +81,10 @@ OptionParser.new do |opts|
   opts.on("--no-targeted-retries", "Disable targeted prompts about missing fields") do
     options[:targeted_retries] = false
   end
+
+  opts.on("--timeout SECONDS", Integer, "Request timeout in seconds (default: 300)") do |t|
+    options[:timeout] = t
+  end
 end.parse!
 
 # Helper method to fix or standardize time formats
@@ -108,11 +113,12 @@ def format_time(time_str)
   end
 end
 
-# Create client instance
+# Create client instance with custom timeout
 client = Ollama::Struct.new(
   model: options[:model],
   host: options[:host],
-  port: options[:port]
+  port: options[:port],
+  timeout: options[:timeout]
 )
 
 # Define a complex travel itinerary schema

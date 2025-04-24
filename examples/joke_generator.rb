@@ -12,7 +12,8 @@ end
 options = {
   host: 'localhost',
   port: 11434,
-  model: 'llama3.2'
+  model: 'llama3.2',
+  timeout: 60 # Default 60 seconds for jokes (simpler task)
 }
 
 # Parse command line arguments
@@ -30,13 +31,18 @@ OptionParser.new do |opts|
   opts.on("-m", "--model MODEL", "Model to use (default: llama2)") do |m|
     options[:model] = m
   end
+
+  opts.on("--timeout SECONDS", Integer, "Request timeout in seconds (default: 60)") do |t|
+    options[:timeout] = t
+  end
 end.parse!
 
-# Create client instance
+# Create client instance with timeout
 client = Ollama::Struct.new(
   model: options[:model],
   host: options[:host],
-  port: options[:port]
+  port: options[:port],
+  timeout: options[:timeout]
 )
 
 # Define the joke schema

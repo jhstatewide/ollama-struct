@@ -31,12 +31,13 @@ module Ollama
   end
 
   class Struct
-    attr_reader :model, :host, :port
+    attr_reader :model, :host, :port, :timeout
 
-    def initialize(model:, host: 'localhost', port: 11_434)
+    def initialize(model:, host: 'localhost', port: 11_434, timeout: 120)
       @model = model
       @host = host
       @port = port
+      @timeout = timeout # Default timeout of 120 seconds (2 minutes)
     end
 
     # Main method to chat with structured output
@@ -412,7 +413,12 @@ module Ollama
     def make_request(messages:, format:, stream:, options:)
       uri = URI("http://#{host}:#{port}/api/chat")
       http = Net::HTTP.new(uri.host, uri.port)
-
+      
+      # Set timeout values
+      http.open_timeout = timeout # Time to wait for connection
+      http.read_timeout = timeout # Time to wait for response
+      http.write_timeout = timeout if http.respond_to?(:write_timeout=) # Time to wait for write (Ruby 2.6+)
+      
       request = Net::HTTP::Post.new(uri.path)
       request['Content-Type'] = 'application/json'
 
