@@ -300,10 +300,30 @@ messages = [{
   content: prompt_template
 }]
 
-puts "\n#{'=' * 80}".colorize(:light_blue)
-puts "📍 Generating #{days}-day travel plan for #{destination}".colorize(:light_yellow)
-puts "   Using model: #{options[:model]} with #{activity_count} activities per day".colorize(:light_green)
-puts "#{'=' * 80}\n".colorize(:light_blue)
+puts "\n#{'=' * 80}".colorize(:bright_blue)
+puts "📍 Generating #{days}-day travel plan for #{destination}".colorize(:bright_yellow)
+puts "   Using model: #{options[:model]} with #{activity_count} activities per day".colorize(:bright_green)
+puts "   Timeout: #{options[:timeout]} seconds (use --timeout to increase if needed)".colorize(:cyan) if options[:debug]
+puts "#{'=' * 80}\n".colorize(:bright_blue)
+
+# Add a progress indicator for long-running requests
+unless options[:debug]
+  spinner_chars = %w[⠋ ⠙ ⠹ ⠸ ⠼ ⠴ ⠦ ⠧ ⠇ ⠏]
+  spinner_thread = Thread.new do
+    i = 0
+    start_time = Time.now
+    loop do
+      elapsed = Time.now - start_time
+      remaining = [options[:timeout] - elapsed, 0].max
+      print "\r#{spinner_chars[i % spinner_chars.length]} Working (#{elapsed.to_i}s elapsed, timeout: #{options[:timeout]}s)...  "
+      if elapsed > options[:timeout] * 0.8 && elapsed <= options[:timeout]
+        print "⚠️  Approaching timeout limit...".colorize(:yellow)
+      end
+      i += 1
+      sleep 0.1
+    end
+  end
+end
 
 # Make the request with proper error handling, using library's built-in validation
 begin
@@ -320,6 +340,12 @@ begin
       targeted_retries: options[:targeted_retries]
     }
   )
+
+  # Stop the spinner if it's running
+  if defined?(spinner_thread) && spinner_thread
+    spinner_thread.kill
+    print "\r" + " " * 80 + "\r" # Clear the spinner line
+  end
 
   # Post-process the result to fix any formatting issues with times
   result['itinerary'].each do |day|
@@ -358,11 +384,11 @@ begin
   # Display the result in a nice format
   destination_info = result['destination']
   puts "\n#{'=' * 80}".colorize(:cyan)
-  puts "🌎 DESTINATION: #{destination_info['name']}, #{destination_info['country']}".colorize(:light_yellow)
+  puts "🌎 DESTINATION: #{destination_info['name']}, #{destination_info['country']}".colorize(:bright_yellow)
   puts "#{'=' * 80}".colorize(:cyan)
   puts "\n#{destination_info['description']}"
   
-  puts "\n📝 Basic Information:".colorize(:light_green)
+  puts "\n📝 Basic Information:".colorize(:bright_green)
   info_table = Terminal::Table.new do |t|
     t << ['Climate', destination_info['climate']]
     t << ['Language', destination_info['language']]
@@ -373,28 +399,28 @@ begin
   puts info_table
   
   # Display itinerary
-  puts "\n📅 Itinerary:".colorize(:light_green)
+  puts "\n📅 Itinerary:".colorize(:bright_green)
   result['itinerary'].each do |day|
-    puts "\n#{'*' * 50}".colorize(:light_blue)
-    puts "Day #{day['day']}: #{day['title']}".colorize(:light_yellow)
-    puts "#{'*' * 50}".colorize(:light_blue)
+    puts "\n#{'*' * 50}".colorize(:bright_blue)
+    puts "Day #{day['day']}: #{day['title']}".colorize(:bright_yellow)
+    puts "#{'*' * 50}".colorize(:bright_blue)
     
     day['activities'].each do |activity|
-      puts "\n🕒 #{activity['time']} - #{activity['activity']}".colorize(:light_magenta)
+      puts "\n🕒 #{activity['time']} - #{activity['activity']}".colorize(:bright_magenta)
       puts "📍 Location: #{activity['location']}"
       puts "   #{activity['description']}" if activity['description']
       
       if activity['cost_estimate']
-        puts "   Cost: #{activity['cost_estimate']['amount']} #{activity['cost_estimate']['currency']}".colorize(:light_red)
+        puts "   Cost: #{activity['cost_estimate']['amount']} #{activity['cost_estimate']['currency']}".colorize(:bright_red)
       end
       
       if activity['tags'] && !activity['tags'].empty?
-        puts "   Tags: #{activity['tags'].join(', ')}".colorize(:light_green)
+        puts "   Tags: #{activity['tags'].join(', ')}".colorize(:bright_green)
       end
     end
     
     if day['accommodation']
-      puts "\n🏨 Accommodation: #{day['accommodation']['name']} (#{day['accommodation']['type']})".colorize(:light_cyan)
+      puts "\n🏨 Accommodation: #{day['accommodation']['name']} (#{day['accommodation']['type']})".colorize(:bright_cyan)
       puts "   Location: #{day['accommodation']['location']}" if day['accommodation']['location']
       puts "   #{day['accommodation']['description']}" if day['accommodation']['description']
     end
@@ -402,8 +428,8 @@ begin
   
   # Display budget
   budget = result['budget_estimate']
-  puts "\n💰 Budget Estimate:".colorize(:light_green)
-  puts "Total: #{budget['total']['amount']} #{budget['total']['currency']}".colorize(:light_red)
+  puts "\n💰 Budget Estimate:".colorize(:bright_green)
+  puts "Total: #{budget['total']['amount']} #{budget['total']['currency']}".colorize(:bright_red)
   
   budget_table = Terminal::Table.new do |t|
     t.title = "Budget Breakdown"
@@ -420,22 +446,43 @@ begin
   puts budget_table
   
   # Display packing list
-  puts "\n🧳 Packing List:".colorize(:light_green)
+  puts "\n🧳 Packing List:".colorize(:bright_green)
   result['packing_list'].each do |category|
-    puts "\n#{category['category']}:".colorize(:light_yellow)
+    puts "\n#{category['category']}:".colorize(:bright_yellow)
     category['items'].each do |item|
       puts "  • #{item}"
     end
   end
   
   # Display travel tips
-  puts "\n💡 Travel Tips:".colorize(:light_green)
+  puts "\n💡 Travel Tips:".colorize(:bright_green)
   result['travel_tips'].each_with_index do |tip, index|
-    puts "\n#{index + 1}. #{tip['title']}".colorize(:light_yellow)
+    puts "\n#{index + 1}. #{tip['title']}".colorize(:bright_yellow)
     puts "   #{tip['content']}"
   end
   
+rescue Ollama::TimeoutError => e
+  # Stop the spinner if it's running
+  if defined?(spinner_thread) && spinner_thread
+    spinner_thread.kill
+    print "\r" + " " * 80 + "\r" # Clear the spinner line
+  end
+  
+  puts "\n#{'!' * 80}".colorize(:red)
+  puts "TIMEOUT ERROR: The request timed out after #{e.timeout_seconds} seconds.".colorize(:red)
+  puts "\nSuggestions:".colorize(:yellow)
+  puts "  1. Increase the timeout limit: --timeout #{e.timeout_seconds * 2}".colorize(:yellow)
+  puts "  2. Simplify your request (fewer days or simpler destination)".colorize(:yellow)
+  puts "  3. Check if the Ollama server is under heavy load".colorize(:yellow)
+  puts "  4. Try a different model that might be faster".colorize(:yellow)
+  exit 1
 rescue Ollama::IncompleteResponseError => e
+  # Stop the spinner if it's running
+  if defined?(spinner_thread) && spinner_thread
+    spinner_thread.kill
+    print "\r" + " " * 80 + "\r" # Clear the spinner line
+  end
+  
   puts "\n#{'!' * 80}".colorize(:red)
   puts "ERROR: Incomplete response from model after retries.".colorize(:red)
   puts "Missing fields:".colorize(:yellow)
@@ -464,4 +511,9 @@ rescue StandardError => e
   puts "Error: #{e.message}".colorize(:red)
   puts e.backtrace.join("\n") if options[:debug]
   exit 1
+ensure
+  # Always make sure the spinner thread is stopped
+  if defined?(spinner_thread) && spinner_thread
+    spinner_thread.kill rescue nil
+  end
 end

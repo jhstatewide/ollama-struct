@@ -11,6 +11,14 @@ module Ollama
   class Error < StandardError; end
   class ConnectionError < Error; end
   class ModelNotFoundError < Error; end
+  class TimeoutError < ConnectionError
+    attr_reader :timeout_seconds
+    
+    def initialize(message, timeout_seconds = nil)
+      @timeout_seconds = timeout_seconds
+      super(message)
+    end
+  end
   class IncompleteResponseError < Error
     attr_reader :missing_fields, :partial_response
     
@@ -456,6 +464,11 @@ module Ollama
         end
         
         JSON.parse(response.body)
+      rescue Net::ReadTimeout, Net::OpenTimeout, Timeout::Error => e
+        raise TimeoutError.new(
+          "Request timed out after #{timeout} seconds. For complex tasks, try increasing the timeout with the --timeout option.",
+          timeout
+        )
       rescue Errno::ECONNREFUSED, Errno::ETIMEDOUT, Errno::ENETUNREACH, SocketError => e
         raise ConnectionError.new("Could not connect to Ollama server at #{host}:#{port} - #{e.message}")
       rescue JSON::ParserError => e
