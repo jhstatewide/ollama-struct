@@ -16,7 +16,9 @@ options = {
   port: 11434,
   model: 'llama3.2',
   days: 3,
-  destination: 'Tokyo, Japan'
+  destination: 'Tokyo, Japan',
+  retries: 2,
+  temperature: 0.7
 }
 
 # Parse command line arguments
@@ -41,6 +43,18 @@ OptionParser.new do |opts|
 
   opts.on("-D", "--destination LOCATION", "Destination (default: Tokyo, Japan)") do |d|
     options[:destination] = d
+  end
+  
+  opts.on("-r", "--retries COUNT", Integer, "Number of retries for incomplete data (default: 2)") do |r|
+    options[:retries] = r
+  end
+  
+  opts.on("-t", "--temperature TEMP", Float, "Temperature for generation (default: 0.7)") do |t|
+    options[:temperature] = t
+  end
+  
+  opts.on("--debug", "Enable debug output") do 
+    options[:debug] = true
   end
 end.parse!
 
@@ -148,25 +162,58 @@ travel_schema = Ollama::Schema.object(
   required: %w[destination itinerary budget_estimate packing_list travel_tips]
 )
 
-# Prepare the prompt
+# Prepare default values based on the destination
 days = options[:days]
 destination = options[:destination]
+destination_name = destination.split(',').first.strip
+destination_country = destination.split(',').last.strip
+
+# Define defaults to use if the model can't generate complete information
+defaults = {
+  'destination' => {
+    'name' => destination_name,
+    'country' => destination_country,
+    'description' => "A wonderful place to visit with many attractions",
+    'climate' => "Varies by season",
+    'language' => "Local language",
+    'currency' => "USD",
+    'best_time_to_visit' => "Spring and Fall"
+  }
+}
+
+# Prepare the prompt
+prompt_template = <<-PROMPT
+Create a detailed #{days}-day travel plan for #{destination}. 
+Include:
+1. Daily activities with specific times, locations, and descriptions
+2. Accommodation details for each day
+3. Realistic budget estimates in appropriate currency
+4. Comprehensive packing suggestions
+5. At least 3 practical travel tips specific to this destination
+PROMPT
+
 messages = [{
-              role: 'user',
-              content: "Create a detailed #{days}-day travel plan for #{destination}. Include daily activities, accommodations, budget estimates, packing suggestions, and travel tips."
-            }]
+  role: 'user',
+  content: prompt_template
+}]
 
 puts "\n#{'=' * 80}".colorize(:light_blue)
 puts "📍 Generating #{days}-day travel plan for #{destination}".colorize(:light_yellow)
 puts "   Using model: #{options[:model]}".colorize(:light_green)
 puts "#{'=' * 80}\n".colorize(:light_blue)
 
-# Make the request with proper error handling
+# Make the request with proper error handling, using library's built-in validation
 begin
+  # Let the library handle validation and retries
   result = client.chat(
     messages: messages,
     format: travel_schema,
-    options: { temperature: 0.7 }
+    options: { 
+      temperature: options[:temperature],
+      max_retries: options[:retries],
+      ensure_complete: true,
+      defaults: defaults
+    }
   )
 
   # Display the result in a nice format
@@ -261,5 +308,6 @@ rescue Ollama::APIError => e
   exit 1
 rescue StandardError => e
   puts "Error: #{e.message}".colorize(:red)
+  puts e.backtrace.join("\n") if options[:debug]
   exit 1
 end

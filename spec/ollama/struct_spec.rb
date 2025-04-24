@@ -150,6 +150,111 @@ RSpec.describe Ollama::Struct do
     end
   end
 
+  describe 'validation and default handling' do
+    let(:messages) { [{ role: 'user', content: 'Tell me about Canada.' }] }
+    let(:schema) do
+      Ollama::Schema.object(
+        properties: {
+          name: Ollama::Schema.string,
+          description: Ollama::Schema.string,
+          details: Ollama::Schema.object(
+            properties: {
+              capital: Ollama::Schema.string,
+              population: Ollama::Schema.integer
+            },
+            required: ['capital']
+          )
+        },
+        required: ['name', 'description']
+      )
+    end
+
+    context 'with incomplete response' do
+      let(:incomplete_response) do
+        {
+          message: {
+            role: 'assistant',
+            content: '{"name":"Canada"}'
+          },
+          done: true
+        }
+      end
+
+      before do
+        # First attempt returns incomplete data
+        stub_request(:post, base_url)
+          .with(body: hash_including({ temperature: 0.7 }))
+          .to_return(status: 200, body: incomplete_response.to_json)
+        
+        # Second attempt (retry) returns more complete data
+        stub_request(:post, base_url)
+          .with(body: hash_including({ temperature: 0.8 }))
+          .to_return(status: 200, body: {
+            message: {
+              role: 'assistant',
+              content: '{"name":"Canada","description":"A country in North America","details":{"capital":"Ottawa","population":38000000}}'
+            },
+            done: true
+          }.to_json)
+      end
+
+      it 'retries to get complete data' do
+        result = client.chat(
+          messages: messages, 
+          format: schema, 
+          options: { 
+            max_retries: 1, 
+            ensure_complete: true,
+            temperature: 0.7
+          }
+        )
+        
+        expect(result['name']).to eq('Canada')
+        expect(result['description']).to eq('A country in North America')
+        expect(result['details']['capital']).to eq('Ottawa')
+      end
+    end
+
+    context 'with defaults when data is incomplete' do
+      let(:incomplete_response) do
+        {
+          message: {
+            role: 'assistant',
+            content: '{"name":"Canada"}'
+          },
+          done: true
+        }
+      end
+
+      before do
+        stub_request(:post, base_url)
+          .to_return(status: 200, body: incomplete_response.to_json)
+      end
+
+      it 'applies defaults for missing fields' do
+        result = client.chat(
+          messages: messages, 
+          format: schema, 
+          options: { 
+            ensure_complete: true,
+            defaults: {
+              'description' => 'Default description',
+              'details' => {
+                'capital' => 'Default Capital',
+                'population' => 1000
+              }
+            }
+          }
+        )
+        
+        expect(result['name']).to eq('Canada')
+        expect(result['description']).to eq('Default description')
+        expect(result['details']['capital']).to eq('Default Capital')
+        expect(result['details']['population']).to eq(1000)
+      end
+    end
+  end
+
   describe 'error handling' do
     let(:messages) { [{ role: 'user', content: 'Tell me about Canada.' }] }
     let(:format) { Ollama::Schema.string }
