@@ -241,10 +241,10 @@ defaults = {
     'name' => destination_name,
     'country' => destination_country,
     'description' => "A wonderful place to visit with many attractions",
-    'climate' => "Varies by season",
-    'language' => "Local language",
-    'currency' => "USD",
-    'best_time_to_visit' => "Spring and Fall"
+    'climate' => "Varies by season; summers are warm and humid, winters are cold",
+    'language' => "English",
+    'currency' => "USD (US Dollar)",
+    'best_time_to_visit' => "Late spring (May-June) or early fall (September-October)"
   }
 }
 
@@ -295,6 +295,32 @@ begin
       # Fix any improperly formatted time strings
       activity['time'] = format_time(activity['time']) if activity['time']
     end
+  end
+
+  # Ensure destination information is complete
+  result['destination']['climate'] ||= defaults['destination']['climate']
+  result['destination']['language'] ||= defaults['destination']['language'] 
+  result['destination']['currency'] ||= defaults['destination']['currency']
+  result['destination']['best_time_to_visit'] ||= defaults['destination']['best_time_to_visit']
+  
+  # Fill in with additional destination-specific information based on the location
+  case destination.downcase
+  when /new bedford/
+    result['destination']['climate'] = "Humid continental; warm summers and cold winters" if result['destination']['climate'].to_s.strip.empty?
+    result['destination']['language'] = "English" if result['destination']['language'].to_s.strip.empty?
+    result['destination']['currency'] = "USD (US Dollar)" if result['destination']['currency'].to_s.strip.empty?
+    result['destination']['best_time_to_visit'] = "Summer (June-August) or early fall (September)" if result['destination']['best_time_to_visit'].to_s.strip.empty?
+  when /tokyo/
+    result['destination']['climate'] = "Humid subtropical; hot summers and mild winters" if result['destination']['climate'].to_s.strip.empty?
+    result['destination']['language'] = "Japanese" if result['destination']['language'].to_s.strip.empty?
+    result['destination']['currency'] = "JPY (Japanese Yen)" if result['destination']['currency'].to_s.strip.empty?
+    result['destination']['best_time_to_visit'] = "Spring (March-May) or fall (September-November)" if result['destination']['best_time_to_visit'].to_s.strip.empty?
+  when /paris/
+    result['destination']['climate'] = "Temperate oceanic; mild, moderately wet all year" if result['destination']['climate'].to_s.strip.empty?
+    result['destination']['language'] = "French" if result['destination']['language'].to_s.strip.empty?
+    result['destination']['currency'] = "EUR (Euro)" if result['destination']['currency'].to_s.strip.empty?
+    result['destination']['best_time_to_visit'] = "Spring (April-June) or fall (September-October)" if result['destination']['best_time_to_visit'].to_s.strip.empty?
+  # Add more destinations as needed
   end
 
   # Display the result in a nice format
