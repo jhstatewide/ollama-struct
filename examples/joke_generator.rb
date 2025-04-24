@@ -68,6 +68,16 @@ begin
   puts "\nTopic: #{result['topic']}"
   puts "\nSetup: #{result['setup']}"
   puts "Punchline: #{result['punchline']}"
+rescue Ollama::ConnectionError => e
+  puts "Connection Error: #{e.message}"
+  exit 1
+rescue Ollama::ModelNotFoundError => e
+  puts "Model Error: #{e.message}"
+  puts "Available models can be checked with 'ollama list' command."
+  exit 1
+rescue Ollama::APIError => e
+  puts "API Error (#{e.status_code}): #{e.message}"
+  exit 1
 rescue StandardError => e
   puts "Error: #{e.message}"
   exit 1

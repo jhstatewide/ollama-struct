@@ -7,6 +7,20 @@ require 'uri'
 require 'net/http'
 
 module Ollama
+  # Custom exception classes
+  class Error < StandardError; end
+  class ConnectionError < Error; end
+  class ModelNotFoundError < Error; end
+  class APIError < Error
+    attr_reader :status_code, :response_body
+    
+    def initialize(message, status_code = nil, response_body = nil)
+      @status_code = status_code
+      @response_body = response_body
+      super(message)
+    end
+  end
+
   class Struct
     attr_reader :model, :host, :port
 
@@ -57,8 +71,34 @@ module Ollama
 
       request.body = payload.to_json
 
-      response = http.request(request)
-      JSON.parse(response.body)
+      begin
+        response = http.request(request)
+        
+        unless response.code.to_i >= 200 && response.code.to_i < 300
+          error_body = JSON.parse(response.body) rescue nil
+          error_message = error_body && error_body['error'] ? error_body['error'] : "HTTP Error: #{response.code}"
+          
+          case response.code.to_i
+          when 404
+            # Check if error relates to model not found
+            if error_message.include?('model') || (error_body && error_body['error'] && error_body['error'].include?('model'))
+              raise ModelNotFoundError.new("Model '#{model}' not found")
+            else
+              raise APIError.new(error_message, response.code.to_i, response.body)
+            end
+          when 400..499
+            raise APIError.new(error_message, response.code.to_i, response.body)
+          when 500..599
+            raise APIError.new("Server error: #{error_message}", response.code.to_i, response.body)
+          end
+        end
+        
+        JSON.parse(response.body)
+      rescue Errno::ECONNREFUSED, Errno::ETIMEDOUT, Errno::ENETUNREACH, SocketError => e
+        raise ConnectionError.new("Could not connect to Ollama server at #{host}:#{port} - #{e.message}")
+      rescue JSON::ParserError => e
+        raise APIError.new("Invalid response from server: #{e.message}")
+      end
     end
   end
 

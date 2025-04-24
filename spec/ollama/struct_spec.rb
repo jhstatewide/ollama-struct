@@ -149,4 +149,46 @@ RSpec.describe Ollama::Struct do
       end
     end
   end
+
+  describe 'error handling' do
+    let(:messages) { [{ role: 'user', content: 'Tell me about Canada.' }] }
+    let(:format) { Ollama::Schema.string }
+
+    context 'when connection fails' do
+      before do
+        stub_request(:post, base_url).to_raise(Errno::ECONNREFUSED)
+      end
+
+      it 'raises ConnectionError' do
+        expect { client.chat(messages: messages, format: format) }.to raise_error(Ollama::ConnectionError)
+      end
+    end
+
+    context 'when model is not found' do
+      before do
+        stub_request(:post, base_url)
+          .to_return(status: 404, body: { error: "model 'llama2' not found" }.to_json)
+      end
+
+      it 'raises ModelNotFoundError' do
+        expect { client.chat(messages: messages, format: format) }.to raise_error(Ollama::ModelNotFoundError)
+      end
+    end
+
+    context 'when API returns an error' do
+      before do
+        stub_request(:post, base_url)
+          .to_return(status: 400, body: { error: "bad request" }.to_json)
+      end
+
+      it 'raises APIError with status code' do
+        begin
+          client.chat(messages: messages, format: format)
+        rescue Ollama::APIError => e
+          expect(e.status_code).to eq(400)
+          expect(e.message).to include("bad request")
+        end
+      end
+    end
+  end
 end
