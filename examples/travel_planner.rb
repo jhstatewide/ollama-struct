@@ -18,7 +18,9 @@ options = {
   days: 3,
   destination: 'Tokyo, Japan',
   retries: 2,
-  temperature: 0.7
+  temperature: 0.7,
+  min_activities: 4,
+  max_activities: 6
 }
 
 # Parse command line arguments
@@ -56,7 +58,45 @@ OptionParser.new do |opts|
   opts.on("--debug", "Enable debug output") do 
     options[:debug] = true
   end
+
+  opts.on("--min-activities COUNT", Integer, "Minimum activities per day (default: 4)") do |count|
+    options[:min_activities] = count
+  end
+  
+  opts.on("--max-activities COUNT", Integer, "Maximum activities per day (default: 6)") do |count|
+    options[:max_activities] = count
+  end
+  
+  opts.on("--exact-activities COUNT", Integer, "Exact number of activities per day") do |count|
+    options[:exact_activities] = count
+  end
 end.parse!
+
+# Helper method to fix or standardize time formats
+def format_time(time_str)
+  # Check if time string is missing the hour at the beginning (e.g. ":30-10:30")
+  if time_str.start_with?(":")
+    "9#{time_str}" # Default to 9am if hour is missing
+  # Check if time range is missing (e.g. just "10:00")
+  elsif !time_str.include?("-") && time_str.include?(":")
+    "#{time_str}-#{time_str.split(':').first.to_i + 1}:00" # Add 1 hour duration
+  # Check if time format is missing colons (e.g. "900-1030")
+  elsif time_str.match?(/^\d{3,4}-\d{3,4}$/)
+    times = time_str.split('-')
+    "#{times[0][0..-3]}:#{times[0][-2..-1]}-#{times[1][0..-3]}:#{times[1][-2..-1]}"
+  # Check if no format at all (e.g. "Morning")
+  elsif !time_str.match?(/\d/) && !time_str.include?("-")
+    case time_str.downcase
+    when "morning" then "9:00-12:00"
+    when "afternoon" then "13:00-17:00"
+    when "evening" then "18:00-21:00"
+    when "night" then "19:00-22:00"
+    else "#{time_str} (time)"
+    end
+  else
+    time_str
+  end
+end
 
 # Create client instance
 client = Ollama::Struct.new(
@@ -66,7 +106,7 @@ client = Ollama::Struct.new(
 )
 
 # Define a complex travel itinerary schema
-# This showcases deeply nested structured data
+# This showcases deeply nested structured data with array quantity constraints
 travel_schema = Ollama::Schema.object(
   properties: {
     destination: Ollama::Schema.object(
@@ -86,25 +126,48 @@ travel_schema = Ollama::Schema.object(
         properties: {
           day: Ollama::Schema.integer,
           title: Ollama::Schema.string,
-          activities: Ollama::Schema.array(
-            Ollama::Schema.object(
-              properties: {
-                time: Ollama::Schema.string,
-                activity: Ollama::Schema.string,
-                location: Ollama::Schema.string,
-                description: Ollama::Schema.string,
-                cost_estimate: Ollama::Schema.object(
-                  properties: {
-                    amount: Ollama::Schema.number,
-                    currency: Ollama::Schema.string
-                  },
-                  required: %w[amount currency]
-                ),
-                tags: Ollama::Schema.array(Ollama::Schema.string)
-              },
-              required: %w[time activity location]
-            )
-          ),
+          activities: options[:exact_activities] ? 
+            Ollama::Schema.array(
+              Ollama::Schema.object(
+                properties: {
+                  time: Ollama::Schema.string,
+                  activity: Ollama::Schema.string,
+                  location: Ollama::Schema.string,
+                  description: Ollama::Schema.string,
+                  cost_estimate: Ollama::Schema.object(
+                    properties: {
+                      amount: Ollama::Schema.number,
+                      currency: Ollama::Schema.string
+                    },
+                    required: %w[amount currency]
+                  ),
+                  tags: Ollama::Schema.array(Ollama::Schema.string, min: 1, max: 3)
+                },
+                required: %w[time activity location]
+              ),
+              exact: options[:exact_activities]
+            ) :
+            Ollama::Schema.array(
+              Ollama::Schema.object(
+                properties: {
+                  time: Ollama::Schema.string,
+                  activity: Ollama::Schema.string,
+                  location: Ollama::Schema.string,
+                  description: Ollama::Schema.string,
+                  cost_estimate: Ollama::Schema.object(
+                    properties: {
+                      amount: Ollama::Schema.number,
+                      currency: Ollama::Schema.string
+                    },
+                    required: %w[amount currency]
+                  ),
+                  tags: Ollama::Schema.array(Ollama::Schema.string, min: 1, max: 3)
+                },
+                required: %w[time activity location]
+              ),
+              min: options[:min_activities],
+              max: options[:max_activities]
+            ),
           accommodation: Ollama::Schema.object(
             properties: {
               name: Ollama::Schema.string,
@@ -116,7 +179,8 @@ travel_schema = Ollama::Schema.object(
           )
         },
         required: %w[day title activities]
-      )
+      ),
+      exact: options[:days]
     ),
     budget_estimate: Ollama::Schema.object(
       properties: {
@@ -144,10 +208,11 @@ travel_schema = Ollama::Schema.object(
       Ollama::Schema.object(
         properties: {
           category: Ollama::Schema.string,
-          items: Ollama::Schema.array(Ollama::Schema.string)
+          items: Ollama::Schema.array(Ollama::Schema.string, min: 3)
         },
         required: %w[category items]
-      )
+      ),
+      min: 3
     ),
     travel_tips: Ollama::Schema.array(
       Ollama::Schema.object(
@@ -156,7 +221,9 @@ travel_schema = Ollama::Schema.object(
           content: Ollama::Schema.string
         },
         required: %w[title content]
-      )
+      ),
+      min: 3,
+      max: 5
     )
   },
   required: %w[destination itinerary budget_estimate packing_list travel_tips]
@@ -182,13 +249,19 @@ defaults = {
 }
 
 # Prepare the prompt
+activity_count = options[:exact_activities] ? 
+  "exactly #{options[:exact_activities]}" : 
+  "#{options[:min_activities]}-#{options[:max_activities]}"
+
 prompt_template = <<-PROMPT
 Create a detailed #{days}-day travel plan for #{destination}. 
 Include:
-1. Daily activities with specific times, locations, and descriptions
+1. Daily activities with specific times, locations, and descriptions (#{activity_count} activities per day)
+   - For each activity, include a time range in 24-hour format (e.g., "9:00-11:00" or "14:30-16:00")
+   - Make sure all times are fully specified with hours and minutes
 2. Accommodation details for each day
 3. Realistic budget estimates in appropriate currency
-4. Comprehensive packing suggestions
+4. Comprehensive packing suggestions (at least 3 categories with 3+ items each)
 5. At least 3 practical travel tips specific to this destination
 PROMPT
 
@@ -199,7 +272,7 @@ messages = [{
 
 puts "\n#{'=' * 80}".colorize(:light_blue)
 puts "📍 Generating #{days}-day travel plan for #{destination}".colorize(:light_yellow)
-puts "   Using model: #{options[:model]}".colorize(:light_green)
+puts "   Using model: #{options[:model]} with #{activity_count} activities per day".colorize(:light_green)
 puts "#{'=' * 80}\n".colorize(:light_blue)
 
 # Make the request with proper error handling, using library's built-in validation
@@ -215,6 +288,14 @@ begin
       defaults: defaults
     }
   )
+
+  # Post-process the result to fix any formatting issues with times
+  result['itinerary'].each do |day|
+    day['activities'].each do |activity|
+      # Fix any improperly formatted time strings
+      activity['time'] = format_time(activity['time']) if activity['time']
+    end
+  end
 
   # Display the result in a nice format
   destination_info = result['destination']

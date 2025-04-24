@@ -135,6 +135,20 @@ module Ollama
         true
       when 'array'
         return false unless data.is_a?(Array)
+        
+        # Check array length constraints if specified
+        if schema[:minItems] && data.length < schema[:minItems]
+          return false
+        end
+        
+        if schema[:maxItems] && data.length > schema[:maxItems]
+          return false
+        end
+        
+        if schema[:exactItems] && data.length != schema[:exactItems]
+          return false
+        end
+        
         return true if data.empty?
         
         # Check items schema if specified
@@ -192,16 +206,43 @@ module Ollama
         
         data
       when 'array'
-        return data if data.is_a?(Array) && !data.empty?
+        result_array = data.is_a?(Array) ? data : []
         
-        # Create a default array with one item
-        if schema[:items] && defaults.is_a?(Array) && !defaults.empty?
-          defaults
-        elsif schema[:items]
-          [create_default_for_schema(schema[:items], defaults.is_a?(Array) ? defaults.first || {} : {})]
-        else
-          []
+        # If array is empty or needs more items to meet constraints
+        if schema[:items]
+          # Determine target size based on constraints
+          target_size = if schema[:exactItems]
+                          schema[:exactItems]
+                        elsif schema[:minItems] && result_array.length < schema[:minItems]
+                          schema[:minItems]
+                        elsif result_array.empty? && schema[:minItems]
+                          schema[:minItems]
+                        elsif result_array.empty?
+                          1 # Default to 1 item if no constraints
+                        else
+                          result_array.length # Keep current length if sufficient
+                        end
+          
+          # Generate additional items if needed
+          while result_array.length < target_size
+            default_item = if defaults.is_a?(Array) && defaults[result_array.length]
+                            defaults[result_array.length]
+                          elsif defaults.is_a?(Array) && !defaults.empty?
+                            defaults.first
+                          else
+                            {}
+                          end
+            
+            result_array << create_default_for_schema(schema[:items], default_item)
+          end
+          
+          # Trim if too many items (for exactItems)
+          if schema[:exactItems] && result_array.length > schema[:exactItems]
+            result_array = result_array.take(schema[:exactItems])
+          end
         end
+        
+        result_array
       when 'string'
         return data if data.is_a?(String) && !data.strip.empty?
         defaults.is_a?(String) ? defaults : "Default value"
@@ -232,13 +273,28 @@ module Ollama
         end
         result
       when 'array'
-        if defaults.is_a?(Array) && !defaults.empty?
-          defaults
-        elsif schema[:items]
-          [] # Empty array by default
-        else
-          []
+        result_array = []
+        
+        if schema[:items]
+          # Create array of required size
+          target_size = schema[:exactItems] || schema[:minItems] || 1
+          
+          # Use provided defaults if available
+          if defaults.is_a?(Array) && !defaults.empty?
+            # Use defaults as templates, repeating if necessary
+            target_size.times do |i|
+              default_template = defaults[i % defaults.length]
+              result_array << create_default_for_schema(schema[:items], default_template)
+            end
+          else
+            # Generate defaults
+            target_size.times do
+              result_array << create_default_for_schema(schema[:items], {})
+            end
+          end
         end
+        
+        result_array
       when 'string'
         defaults.is_a?(String) ? defaults : "Default value"
       when 'number'
@@ -327,11 +383,30 @@ module Ollama
       { type: 'boolean' }
     end
 
-    def self.array(items)
-      {
+    # Enhanced array method with quantity constraints
+    # @param items [Hash] Schema for array items
+    # @param min [Integer, nil] Minimum number of items (optional)
+    # @param max [Integer, nil] Maximum number of items (optional)
+    # @param exact [Integer, nil] Exact number of items (optional)
+    # @return [Hash] Schema with array constraints
+    def self.array(items, min: nil, max: nil, exact: nil)
+      schema = {
         type: 'array',
         items: items
       }
+      
+      # Add constraints if specified
+      schema[:minItems] = min if min
+      schema[:maxItems] = max if max
+      schema[:exactItems] = exact if exact
+      
+      # exactItems takes precedence over min/max
+      if exact
+        schema.delete(:minItems)
+        schema.delete(:maxItems)
+      end
+      
+      schema
     end
 
     # Add default values to a schema

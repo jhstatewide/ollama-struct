@@ -255,6 +255,161 @@ RSpec.describe Ollama::Struct do
     end
   end
 
+  describe 'array constraints' do
+    let(:messages) { [{ role: 'user', content: 'List some cities in Canada.' }] }
+    
+    context 'with exact item count' do
+      let(:schema) do
+        Ollama::Schema.array(
+          Ollama::Schema.object(
+            properties: { city: Ollama::Schema.string },
+            required: ['city']
+          ),
+          exact: 3
+        )
+      end
+      
+      let(:incomplete_response) do
+        {
+          message: {
+            role: 'assistant',
+            content: '[{"city":"Toronto"},{"city":"Vancouver"}]'
+          },
+          done: true
+        }
+      end
+      
+      let(:complete_response) do
+        {
+          message: {
+            role: 'assistant',
+            content: '[{"city":"Toronto"},{"city":"Vancouver"},{"city":"Montreal"}]'
+          },
+          done: true
+        }
+      end
+      
+      before do
+        # First attempt returns incomplete data (only 2 cities)
+        stub_request(:post, base_url)
+          .with(body: hash_including({ temperature: 0.7 }))
+          .to_return(status: 200, body: incomplete_response.to_json)
+        
+        # Second attempt (retry) returns correct number of cities
+        stub_request(:post, base_url)
+          .with(body: hash_including({ temperature: 0.8 }))
+          .to_return(status: 200, body: complete_response.to_json)
+      end
+      
+      it 'retries until exact number of items is received' do
+        result = client.chat(
+          messages: messages, 
+          format: schema, 
+          options: { 
+            max_retries: 1, 
+            ensure_complete: true,
+            temperature: 0.7
+          }
+        )
+        
+        expect(result.length).to eq(3)
+        expect(result.map { |item| item['city'] }).to include('Toronto', 'Vancouver', 'Montreal')
+      end
+      
+      it 'generates missing items with defaults if needed' do
+        # Stub to always return incomplete
+        stub_request(:post, base_url)
+          .to_return(status: 200, body: incomplete_response.to_json)
+          
+        result = client.chat(
+          messages: messages, 
+          format: schema, 
+          options: { 
+            ensure_complete: true,
+            defaults: [
+              { 'city' => 'Default City' }
+            ]
+          }
+        )
+        
+        expect(result.length).to eq(3)
+        expect(result[2]['city']).to eq('Default City')
+      end
+    end
+    
+    context 'with min/max item count' do
+      let(:schema) do
+        Ollama::Schema.array(
+          Ollama::Schema.object(
+            properties: { city: Ollama::Schema.string },
+            required: ['city']
+          ),
+          min: 2,
+          max: 4
+        )
+      end
+      
+      let(:too_few_response) do
+        {
+          message: {
+            role: 'assistant',
+            content: '[{"city":"Toronto"}]'
+          },
+          done: true
+        }
+      end
+      
+      let(:valid_response) do
+        {
+          message: {
+            role: 'assistant',
+            content: '[{"city":"Toronto"},{"city":"Vancouver"},{"city":"Montreal"}]'
+          },
+          done: true
+        }
+      end
+      
+      let(:too_many_response) do
+        {
+          message: {
+            role: 'assistant',
+            content: '[{"city":"Toronto"},{"city":"Vancouver"},{"city":"Montreal"},{"city":"Calgary"},{"city":"Ottawa"}]'
+          },
+          done: true
+        }
+      end
+      
+      it 'validates minimum item count' do
+        stub_request(:post, base_url)
+          .to_return(status: 200, body: too_few_response.to_json)
+          
+        result = client.chat(
+          messages: messages, 
+          format: schema, 
+          options: { 
+            ensure_complete: true,
+            defaults: [{ 'city' => 'Default City' }]
+          }
+        )
+        
+        expect(result.length).to be >= 2
+      end
+      
+      it 'accepts valid item count in range' do
+        stub_request(:post, base_url)
+          .to_return(status: 200, body: valid_response.to_json)
+          
+        result = client.chat(
+          messages: messages, 
+          format: schema, 
+          options: { ensure_complete: true }
+        )
+        
+        expect(result.length).to eq(3)
+      end
+    end
+  end
+
   describe 'error handling' do
     let(:messages) { [{ role: 'user', content: 'Tell me about Canada.' }] }
     let(:format) { Ollama::Schema.string }
