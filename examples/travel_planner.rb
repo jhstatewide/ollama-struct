@@ -20,7 +20,9 @@ options = {
   retries: 2,
   temperature: 0.7,
   min_activities: 4,
-  max_activities: 6
+  max_activities: 6,
+  strict: false,
+  targeted_retries: true
 }
 
 # Parse command line arguments
@@ -69,6 +71,14 @@ OptionParser.new do |opts|
   
   opts.on("--exact-activities COUNT", Integer, "Exact number of activities per day") do |count|
     options[:exact_activities] = count
+  end
+
+  opts.on("--strict", "Raise exception instead of using defaults for incomplete data") do
+    options[:strict] = true
+  end
+  
+  opts.on("--no-targeted-retries", "Disable targeted prompts about missing fields") do
+    options[:targeted_retries] = false
   end
 end.parse!
 
@@ -255,14 +265,28 @@ activity_count = options[:exact_activities] ?
 
 prompt_template = <<-PROMPT
 Create a detailed #{days}-day travel plan for #{destination}. 
-Include:
-1. Daily activities with specific times, locations, and descriptions (#{activity_count} activities per day)
-   - For each activity, include a time range in 24-hour format (e.g., "9:00-11:00" or "14:30-16:00")
-   - Make sure all times are fully specified with hours and minutes
-2. Accommodation details for each day
-3. Realistic budget estimates in appropriate currency
-4. Comprehensive packing suggestions (at least 3 categories with 3+ items each)
-5. At least 3 practical travel tips specific to this destination
+
+Your response MUST include:
+1. Detailed destination information:
+   - Full name and country
+   - Descriptive paragraph about the destination
+   - Climate information
+   - Primary language spoken
+   - Currency used
+   - Best time to visit
+
+2. A day-by-day itinerary with #{activity_count} activities per day:
+   - Each day must have a clear title/theme
+   - Each activity needs a specific time range (e.g. "9:00-11:00")
+   - Each activity needs a specific location with street address if applicable
+   - Brief description for each activity
+
+3. Accommodation details for each day
+4. Realistic budget estimates in appropriate currency
+5. Packing list organized by category (at least 3 categories with 3+ items each)
+6. At least 3 practical travel tips specific to this destination
+
+Be thorough and detailed - don't leave any fields empty.
 PROMPT
 
 messages = [{
@@ -277,7 +301,7 @@ puts "#{'=' * 80}\n".colorize(:light_blue)
 
 # Make the request with proper error handling, using library's built-in validation
 begin
-  # Let the library handle validation and retries
+  # Let the library handle validation and retries with new options
   result = client.chat(
     messages: messages,
     format: travel_schema,
@@ -285,7 +309,9 @@ begin
       temperature: options[:temperature],
       max_retries: options[:retries],
       ensure_complete: true,
-      defaults: defaults
+      defaults: defaults,
+      strict: options[:strict],
+      targeted_retries: options[:targeted_retries]
     }
   )
 
@@ -403,6 +429,21 @@ begin
     puts "   #{tip['content']}"
   end
   
+rescue Ollama::IncompleteResponseError => e
+  puts "\n#{'!' * 80}".colorize(:red)
+  puts "ERROR: Incomplete response from model after retries.".colorize(:red)
+  puts "Missing fields:".colorize(:yellow)
+  e.missing_fields.each do |field|
+    puts "  - #{field}".colorize(:yellow)
+  end
+  
+  if options[:debug] && e.partial_response
+    puts "\nPartial response received:".colorize(:cyan)
+    puts JSON.pretty_generate(e.partial_response).colorize(:cyan)
+  end
+  
+  puts "\nTry increasing retries (-r option) or disabling strict mode (remove --strict)".colorize(:yellow)
+  exit 1
 rescue Ollama::ConnectionError => e
   puts "Connection Error: #{e.message}".colorize(:red)
   exit 1

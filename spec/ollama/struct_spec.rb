@@ -410,6 +410,80 @@ RSpec.describe Ollama::Struct do
     end
   end
 
+  describe 'strict mode' do
+    let(:messages) { [{ role: 'user', content: 'Tell me about Canada.' }] }
+    let(:schema) do
+      Ollama::Schema.object(
+        properties: {
+          name: Ollama::Schema.string,
+          description: Ollama::Schema.string,
+          capital: Ollama::Schema.string
+        },
+        required: ['name', 'description', 'capital']
+      )
+    end
+    
+    let(:incomplete_response) do
+      {
+        message: {
+          role: 'assistant',
+          content: '{"name":"Canada","description":"A beautiful country"}'
+        },
+        done: true
+      }
+    end
+    
+    before do
+      stub_request(:post, base_url)
+        .to_return(status: 200, body: incomplete_response.to_json)
+    end
+    
+    it 'raises IncompleteResponseError in strict mode' do
+      expect {
+        client.chat(
+          messages: messages, 
+          format: schema, 
+          options: { 
+            ensure_complete: true,
+            strict: true
+          }
+        )
+      }.to raise_error(Ollama::IncompleteResponseError)
+    end
+    
+    it 'includes missing fields in the exception' do
+      begin
+        client.chat(
+          messages: messages, 
+          format: schema, 
+          options: { 
+            ensure_complete: true,
+            strict: true
+          }
+        )
+      rescue Ollama::IncompleteResponseError => e
+        expect(e.missing_fields).to include('capital')
+        expect(e.partial_response).to include('name' => 'Canada')
+      end
+    end
+    
+    it 'applies defaults in non-strict mode' do
+      result = client.chat(
+        messages: messages, 
+        format: schema, 
+        options: { 
+          ensure_complete: true,
+          strict: false,
+          defaults: {
+            'capital' => 'Ottawa'
+          }
+        }
+      )
+      
+      expect(result['capital']).to eq('Ottawa')
+    end
+  end
+
   describe 'error handling' do
     let(:messages) { [{ role: 'user', content: 'Tell me about Canada.' }] }
     let(:format) { Ollama::Schema.string }

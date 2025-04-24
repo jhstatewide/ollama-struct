@@ -11,7 +11,15 @@ module Ollama
   class Error < StandardError; end
   class ConnectionError < Error; end
   class ModelNotFoundError < Error; end
-  class IncompleteResponseError < Error; end
+  class IncompleteResponseError < Error
+    attr_reader :missing_fields, :partial_response
+    
+    def initialize(message, missing_fields = [], partial_response = nil)
+      @missing_fields = missing_fields
+      @partial_response = partial_response
+      super(message)
+    end
+  end
   class APIError < Error
     attr_reader :status_code, :response_body
     
@@ -40,11 +48,15 @@ module Ollama
     # @option options [Float] :temperature (0.7) Temperature for generation
     # @option options [Boolean] :ensure_complete (false) Automatically validate and fill incomplete responses
     # @option options [Hash] :defaults Default values to use for missing fields
+    # @option options [Boolean] :strict (false) Raise exception instead of using defaults for incomplete data
+    # @option options [Boolean] :targeted_retries (true) Use targeted prompts about missing fields when retrying
     def chat(messages:, format:, stream: false, options: {})
       # Extract retry-specific options
       max_retries = options.delete(:max_retries) || 0
       ensure_complete = options.delete(:ensure_complete) || false
       defaults = options.delete(:defaults) || {}
+      strict = options.delete(:strict) || false
+      targeted_retries = options.key?(:targeted_retries) ? options.delete(:targeted_retries) : true
       temperature = options[:temperature] || 0.7
       
       retries_left = max_retries
@@ -67,31 +79,57 @@ module Ollama
               
               # Validate the result if ensure_complete is true
               if ensure_complete
-                if validate_schema_completeness(parsed_content, format)
+                missing_fields = []
+                valid = validate_schema_completeness(parsed_content, format, missing_fields)
+                
+                if valid
                   return parsed_content
                 elsif retries_left > 0
                   retries_left -= 1
                   current_temperature += 0.1
                   
-                  # Add guidance for the retry
-                  current_messages << {
-                    role: 'user',
-                    content: "Please try again with more complete information for all required fields."
-                  }
+                  # Add targeted guidance for the retry if enabled
+                  if targeted_retries && !missing_fields.empty?
+                    retry_prompt = generate_targeted_prompt(missing_fields, format)
+                    current_messages << {
+                      role: 'user',
+                      content: retry_prompt
+                    }
+                  else
+                    # Generic retry prompt
+                    current_messages << {
+                      role: 'user',
+                      content: "Please try again with more complete information for all required fields."
+                    }
+                  end
                   next
                 else
-                  # Apply defaults if retries are exhausted
+                  # If strict mode is enabled, raise an exception instead of using defaults
+                  if strict
+                    error_message = "Incomplete response from model after #{max_retries} retries."
+                    error_message += " Missing fields: #{missing_fields.join(', ')}" unless missing_fields.empty?
+                    raise IncompleteResponseError.new(error_message, missing_fields, parsed_content)
+                  end
+                  
+                  # Apply defaults if retries are exhausted and not in strict mode
                   return apply_defaults(parsed_content, format, defaults)
                 end
               end
               
               return parsed_content
-            rescue JSON::ParserError
+            rescue JSON::ParserError => e
               if retries_left > 0 && ensure_complete
                 retries_left -= 1
                 current_temperature += 0.05
+                current_messages << {
+                  role: 'user',
+                  content: "Your response couldn't be parsed as valid JSON. Please provide a properly formatted response."
+                }
                 next
+              elsif strict && ensure_complete
+                raise IncompleteResponseError.new("Failed to parse JSON response: #{e.message}", [], response['message']['content'])
               end
+              
               return response['message']['content']
             end
           end
@@ -112,57 +150,120 @@ module Ollama
 
     private
 
-    # Recursively validate schema completeness
-    def validate_schema_completeness(data, schema)
+    # Generate a targeted prompt to help the model fix specific missing fields
+    def generate_targeted_prompt(missing_fields, schema)
+      prompt = "Your response is missing some required information. Please provide the following details:\n\n"
+      
+      missing_fields.each do |field_path|
+        prompt += "- #{field_path}\n"
+      end
+      
+      prompt += "\nPlease include these details in your next response while keeping all the information you've already provided."
+    end
+
+    # Recursively validate schema completeness, now tracking missing fields
+    def validate_schema_completeness(data, schema, missing_fields = [], path = "")
       case schema[:type]
       when 'object'
         return false unless data.is_a?(Hash)
         
+        valid = true
+        
         # Check required fields
         if schema[:required]
-          return false unless schema[:required].all? { |field| data.key?(field) && !data[field].nil? }
+          schema[:required].each do |field|
+            field_path = path.empty? ? field : "#{path}.#{field}"
+            
+            if !data.key?(field) || data[field].nil?
+              missing_fields << field_path
+              valid = false
+            elsif schema[:properties] && schema[:properties][field]
+              # Recursively validate the required field's content
+              field_valid = validate_schema_completeness(
+                data[field], 
+                schema[:properties][field], 
+                missing_fields, 
+                field_path
+              )
+              valid = false unless field_valid
+            elsif data[field].is_a?(String) && data[field].strip.empty?
+              # Specifically check for empty strings
+              missing_fields << field_path
+              valid = false
+            end
+          end
         end
         
         # Check properties if they exist in the data
         if schema[:properties]
           schema[:properties].each do |prop_name, prop_schema|
-            if data.key?(prop_name)
-              return false unless validate_schema_completeness(data[prop_name], prop_schema)
+            field_path = path.empty? ? prop_name : "#{path}.#{prop_name}"
+            
+            if data.key?(prop_name) && !data[prop_name].nil?
+              # Only validate fields that actually exist in the data
+              field_valid = validate_schema_completeness(
+                data[prop_name], 
+                prop_schema, 
+                missing_fields, 
+                field_path
+              )
+              valid = false unless field_valid
             end
           end
         end
         
-        true
+        valid
       when 'array'
         return false unless data.is_a?(Array)
         
+        valid = true
+        
         # Check array length constraints if specified
         if schema[:minItems] && data.length < schema[:minItems]
-          return false
+          missing_fields << "#{path} (requires at least #{schema[:minItems]} items, has #{data.length})"
+          valid = false
         end
         
         if schema[:maxItems] && data.length > schema[:maxItems]
-          return false
+          missing_fields << "#{path} (exceeds maximum of #{schema[:maxItems]} items, has #{data.length})"
+          valid = false
         end
         
         if schema[:exactItems] && data.length != schema[:exactItems]
-          return false
+          missing_fields << "#{path} (requires exactly #{schema[:exactItems]} items, has #{data.length})"
+          valid = false
         end
         
-        return true if data.empty?
+        return valid if data.empty?
         
         # Check items schema if specified
         if schema[:items]
-          data.all? { |item| validate_schema_completeness(item, schema[:items]) }
-        else
-          true
+          data.each_with_index do |item, idx|
+            item_path = "#{path}[#{idx}]"
+            item_valid = validate_schema_completeness(item, schema[:items], missing_fields, item_path)
+            valid = false unless item_valid
+          end
         end
+        
+        valid
       when 'string'
-        data.is_a?(String) && !data.strip.empty?
+        if !data.is_a?(String) || data.strip.empty?
+          missing_fields << "#{path} (empty or not a string)"
+          return false
+        end
+        true
       when 'number', 'integer'
-        data.is_a?(Numeric)
+        if !data.is_a?(Numeric)
+          missing_fields << "#{path} (not a number)"
+          return false
+        end
+        true
       when 'boolean'
-        data == true || data == false
+        if data != true && data != false
+          missing_fields << "#{path} (not a boolean)"
+          return false
+        end
+        true
       else
         true # Unknown type, consider it valid
       end
