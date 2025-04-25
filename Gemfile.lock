@@ -2,6 +2,7 @@ PATH
   remote: .
   specs:
     ollama-struct (0.1.0)
+      ostruct (~> 0.5)
 
 GEM
   remote: https://rubygems.org/
@@ -42,7 +43,6 @@ PLATFORMS
 
 DEPENDENCIES
   ollama-struct!
-  ostruct
   rake (~> 13.0)
   rspec (~> 3.0)
   webmock (~> 3.0)
