@@ -284,39 +284,41 @@ module Ollama
       when 'object'
         data ||= {}
         
-        # Handle required fields that are missing
-        if schema[:required] && schema[:properties]
-          schema[:required].each do |field|
-            next if data.key?(field) && !data[field].nil?
+        # First handle explicit defaults for any property (required or not)
+        # This ensures nested objects like 'details' get created even if not required
+        if defaults.is_a?(Hash) && !defaults.empty?
+          defaults.each do |key, value|
+            # Skip if the property already has a non-nil value
+            next if data.key?(key) && !data[key].nil?
             
-            # Check if there's a default specified
-            if defaults.key?(field)
-              data[field] = defaults[field]
-            elsif schema[:properties][field]
-              # Create a default based on the type
-              data[field] = create_default_for_schema(schema[:properties][field], defaults.dig(field) || {})
+            # If this is a nested object, handle it specially
+            if schema[:properties] && schema[:properties][key] && 
+               schema[:properties][key][:type] == 'object' && 
+               value.is_a?(Hash)
+              data[key] ||= {}  # Ensure the field exists
+              data[key] = apply_defaults(data[key], schema[:properties][key], value)
+            else
+              data[key] = value
             end
           end
         end
         
-        # Process all properties
-        if schema[:properties]
-          schema[:properties].each do |prop_name, prop_schema|
-            # Skip if the property has a non-nil value
-            next if data.key?(prop_name) && !data[prop_name].nil?
+        # Then handle required fields that weren't already set by defaults
+        if schema[:required] && schema[:properties]
+          schema[:required].each do |field|
+            # Skip if property already has a value
+            next if data.key?(field) && !data[field].nil?
             
-            # Use default if available, or create one
-            if defaults.key?(prop_name)
-              data[prop_name] = defaults[prop_name]
-            else
-              data[prop_name] = create_default_for_schema(prop_schema, defaults.dig(prop_name) || {})
+            # Create a default based on the schema if not already specified in defaults
+            if schema[:properties][field]
+              data[field] = create_default_for_schema(schema[:properties][field], {})
             end
           end
         end
         
         data
       when 'array'
-        result_array = data.is_a?(Array) ? data : []
+        result_array = data.is_a?(Array) ? data.dup : []
         
         # If array is empty or needs more items to meet constraints
         if schema[:items]
@@ -335,15 +337,36 @@ module Ollama
           
           # Generate additional items if needed
           while result_array.length < target_size
-            default_item = if defaults.is_a?(Array) && defaults[result_array.length]
-                            defaults[result_array.length]
-                          elsif defaults.is_a?(Array) && !defaults.empty?
-                            defaults.first
-                          else
-                            {}
-                          end
+            current_index = result_array.length
             
-            result_array << create_default_for_schema(schema[:items], default_item)
+            # Get the default for this specific position if available
+            default_item = if defaults.is_a?(Array)
+                             if current_index < defaults.length && !defaults[current_index].nil?
+                               # Use position-specific default if it exists
+                               defaults[current_index]
+                             elsif defaults.any? { |d| !d.nil? }
+                               # Find the first non-nil default to use as template
+                               defaults.find { |d| !d.nil? }
+                             else
+                               {}
+                             end
+                           elsif defaults.is_a?(Hash) && !defaults.empty?
+                             defaults
+                           else
+                             {}
+                           end
+            
+            # Create a new item using the schema and default
+            new_item = if schema[:items][:type] == 'object' && default_item.is_a?(Hash)
+                         # For object items, ensure all properties from the default are applied
+                         empty_item = create_default_for_schema(schema[:items], {})
+                         empty_item.merge(default_item)
+                       else
+                         # For other types, use create_default_for_schema
+                         create_default_for_schema(schema[:items], default_item)
+                       end
+            
+            result_array << new_item
           end
           
           # Trim if too many items (for exactItems)
@@ -373,11 +396,25 @@ module Ollama
       when 'object'
         result = {}
         if schema[:properties]
-          schema[:properties].each do |prop_name, prop_schema|
-            # Only create defaults for required properties
-            if schema[:required]&.include?(prop_name)
-              default_value = defaults.is_a?(Hash) ? defaults[prop_name] : nil
-              result[prop_name] = create_default_for_schema(prop_schema, default_value || {})
+          # First, apply defaults for required properties
+          if schema[:required]
+            schema[:required].each do |prop_name|
+              if defaults.is_a?(Hash) && defaults.key?(prop_name)
+                # Use the provided default value
+                result[prop_name] = defaults[prop_name]
+              elsif schema[:properties][prop_name]
+                # Create a default based on the schema
+                default_value = defaults.is_a?(Hash) ? defaults[prop_name] : nil
+                result[prop_name] = create_default_for_schema(schema[:properties][prop_name], default_value || {})
+              end
+            end
+          end
+          
+          # Then handle any additional properties that have defaults
+          if defaults.is_a?(Hash)
+            defaults.each do |key, value|
+              next if result.key?(key) # Skip if already set by required loop
+              result[key] = value if schema[:properties].key?(key)
             end
           end
         end
@@ -393,11 +430,36 @@ module Ollama
           if defaults.is_a?(Array) && !defaults.empty?
             # Use defaults as templates, repeating if necessary
             target_size.times do |i|
-              default_template = defaults[i % defaults.length]
-              result_array << create_default_for_schema(schema[:items], default_template)
+              if i < defaults.length && !defaults[i].nil?
+                # Use position-specific default
+                item_default = defaults[i]
+              elsif defaults.any? { |d| !d.nil? }
+                # Use first non-nil default as template
+                item_default = defaults.find { |d| !d.nil? }
+              else
+                item_default = {}
+              end
+              
+              # Apply this default to create item
+              if schema[:items][:type] == 'object' && item_default.is_a?(Hash)
+                new_item = {}
+                # Ensure all required properties are set
+                if schema[:items][:required]
+                  schema[:items][:required].each do |req_prop|
+                    new_item[req_prop] = item_default[req_prop] || "Default #{req_prop}"
+                  end
+                end
+                # Add any other properties from the default
+                item_default.each do |k, v|
+                  new_item[k] = v unless new_item.key?(k)
+                end
+                result_array << new_item
+              else
+                result_array << item_default
+              end
             end
           else
-            # Generate defaults
+            # Generate defaults without templates
             target_size.times do
               result_array << create_default_for_schema(schema[:items], {})
             end

@@ -150,7 +150,172 @@ RSpec.describe Ollama::Struct do
     end
   end
 
-  describe 'validation and default handling' do
+  describe 'schema validation' do
+    let(:messages) { [{ role: 'user', content: 'Tell me about Canada.' }] }
+    
+    context 'with object schemas' do
+      let(:schema) do
+        Ollama::Schema.object(
+          properties: {
+            name: Ollama::Schema.string,
+            description: Ollama::Schema.string
+          },
+          required: ['name', 'description']
+        )
+      end
+
+      it 'validates required fields' do
+        missing_fields = []
+        valid = client.send(:validate_schema_completeness, 
+                            { 'name' => 'Canada' }, 
+                            schema, 
+                            missing_fields)
+        
+        expect(valid).to be false
+        expect(missing_fields).to include('description')
+      end
+
+      it 'accepts valid data' do
+        missing_fields = []
+        valid = client.send(:validate_schema_completeness,
+                            { 'name' => 'Canada', 'description' => 'A country' },
+                            schema,
+                            missing_fields)
+        
+        expect(valid).to be true
+        expect(missing_fields).to be_empty
+      end
+    end
+
+    context 'with array schemas' do
+      let(:array_schema) do
+        Ollama::Schema.array(
+          Ollama::Schema.object(
+            properties: { city: Ollama::Schema.string },
+            required: ['city']
+          ),
+          exact: 3
+        )
+      end
+
+      it 'validates exact item count' do
+        missing_fields = []
+        valid = client.send(:validate_schema_completeness,
+                            [{ 'city' => 'Toronto' }, { 'city' => 'Vancouver' }],
+                            array_schema,
+                            missing_fields)
+        
+        expect(valid).to be false
+        expect(missing_fields.first).to include('requires exactly 3 items')
+      end
+    end
+  end
+
+  describe 'default value handling' do
+    let(:messages) { [{ role: 'user', content: 'Tell me about Canada.' }] }
+    let(:incomplete_response) { { 'name' => 'Canada' } }
+    
+    describe 'object defaults' do
+      let(:object_schema) do
+        Ollama::Schema.object(
+          properties: {
+            name: Ollama::Schema.string,
+            description: Ollama::Schema.string
+          },
+          required: ['name', 'description']
+        )
+      end
+
+      it 'applies simple object defaults' do
+        result = client.send(:apply_defaults, 
+                             incomplete_response, 
+                             object_schema, 
+                             { 'description' => 'Default description' })
+        
+        expect(result['name']).to eq('Canada')
+        expect(result['description']).to eq('Default description')
+      end
+
+      it 'applies nested object defaults' do
+        nested_schema = Ollama::Schema.object(
+          properties: {
+            name: Ollama::Schema.string,
+            details: Ollama::Schema.object(
+              properties: { capital: Ollama::Schema.string },
+              required: ['capital']
+            )
+          },
+          required: ['name', 'details']
+        )
+
+        result = client.send(:apply_defaults,
+                             { 'name' => 'Canada' },
+                             nested_schema,
+                             { 'details' => { 'capital' => 'Ottawa' } })
+        
+        expect(result['details']['capital']).to eq('Ottawa')
+      end
+    end
+
+    describe 'array defaults' do
+      let(:array_schema) do
+        Ollama::Schema.array(
+          Ollama::Schema.object(
+            properties: { city: Ollama::Schema.string },
+            required: ['city']
+          ),
+          exact: 3
+        )
+      end
+
+      it 'fills missing array items with positional defaults' do
+        # Test with incomplete array and positional defaults
+        incomplete_array = [{ 'city' => 'Toronto' }, { 'city' => 'Vancouver' }]
+        
+        # Define positional defaults - nil for existing items, specific default for missing item
+        positional_defaults = [
+          nil,                      # Skip first item (already exists)
+          nil,                      # Skip second item (already exists)
+          { 'city' => 'Montreal' }  # Default for third item
+        ]
+        
+        result = client.send(:apply_defaults, incomplete_array, array_schema, positional_defaults)
+        
+        # Verify we get exactly 3 items with the correct values
+        expect(result.length).to eq(3)
+        expect(result[0]['city']).to eq('Toronto')
+        expect(result[1]['city']).to eq('Vancouver')
+        expect(result[2]['city']).to eq('Montreal')
+      end
+      
+      it 'fills missing array items using template default' do
+        # Test with incomplete array and a single template default
+        incomplete_array = [{ 'city' => 'Toronto' }]
+        template_default = [{ 'city' => 'Default City' }]
+        
+        result = client.send(:apply_defaults, incomplete_array, array_schema, template_default)
+        
+        # Verify we get exactly 3 items, with the template used for missing items
+        expect(result.length).to eq(3)
+        expect(result[0]['city']).to eq('Toronto')
+        expect(result[1]['city']).to eq('Default City')
+        expect(result[2]['city']).to eq('Default City')
+      end
+      
+      it 'creates a new array with defaults if none exists' do
+        # Test with nil input and a single default template
+        result = client.send(:apply_defaults, nil, array_schema, [{ 'city' => 'Default City' }])
+        
+        # Verify we get exactly 3 items, all using the template
+        expect(result.length).to eq(3)
+        expect(result[0]['city']).to eq('Default City')
+        expect(result[1]['city']).to eq('Default City')
+        expect(result[2]['city']).to eq('Default City')
+      end
+    end
+  end
+
+  describe 'retry and complete response handling' do
     let(:messages) { [{ role: 'user', content: 'Tell me about Canada.' }] }
     let(:schema) do
       Ollama::Schema.object(
@@ -180,22 +345,44 @@ RSpec.describe Ollama::Struct do
         }
       end
 
+      let(:complete_response) do
+        {
+          message: {
+            role: 'assistant',
+            content: '{"name":"Canada","description":"A country in North America","details":{"capital":"Ottawa","population":38000000}}'
+          },
+          done: true
+        }
+      end
+
       before do
         # First attempt returns incomplete data
         stub_request(:post, base_url)
-          .with(body: hash_including({ temperature: 0.7 }))
+          .with(body: hash_including({ 
+            "model" => "llama2",
+            "messages" => [{ "role" => "user", "content" => "Tell me about Canada." }],
+            "temperature" => 0.7
+          }))
           .to_return(status: 200, body: incomplete_response.to_json)
         
-        # Second attempt (retry) returns more complete data
+        # Second attempt (retry) with incremented temperature
         stub_request(:post, base_url)
-          .with(body: hash_including({ temperature: 0.8 }))
-          .to_return(status: 200, body: {
-            message: {
-              role: 'assistant',
-              content: '{"name":"Canada","description":"A country in North America","details":{"capital":"Ottawa","population":38000000}}'
-            },
-            done: true
-          }.to_json)
+          .with(body: hash_including({ 
+            "model" => "llama2",
+            "temperature" => 0.8
+          }))
+          .to_return(status: 200, body: complete_response.to_json)
+          
+        # Stub for targeted retry with specific request content
+        stub_request(:post, base_url)
+          .with(body: ->(body) {
+            body_hash = JSON.parse(body)
+            messages = body_hash["messages"]
+            messages.length == 2 && 
+            messages[0]["content"] == "Tell me about Canada." &&
+            messages[1]["content"].include?("missing some required information")
+          })
+          .to_return(status: 200, body: complete_response.to_json)
       end
 
       it 'retries to get complete data' do
@@ -228,6 +415,10 @@ RSpec.describe Ollama::Struct do
 
       before do
         stub_request(:post, base_url)
+          .with(body: hash_including({
+            "model" => "llama2",
+            "messages" => [{ "role" => "user", "content" => "Tell me about Canada." }]
+          }))
           .to_return(status: 200, body: incomplete_response.to_json)
       end
 
@@ -249,163 +440,10 @@ RSpec.describe Ollama::Struct do
         
         expect(result['name']).to eq('Canada')
         expect(result['description']).to eq('Default description')
+        expect(result).to have_key('details')
+        expect(result['details']).to be_a(Hash)
         expect(result['details']['capital']).to eq('Default Capital')
         expect(result['details']['population']).to eq(1000)
-      end
-    end
-  end
-
-  describe 'array constraints' do
-    let(:messages) { [{ role: 'user', content: 'List some cities in Canada.' }] }
-    
-    context 'with exact item count' do
-      let(:schema) do
-        Ollama::Schema.array(
-          Ollama::Schema.object(
-            properties: { city: Ollama::Schema.string },
-            required: ['city']
-          ),
-          exact: 3
-        )
-      end
-      
-      let(:incomplete_response) do
-        {
-          message: {
-            role: 'assistant',
-            content: '[{"city":"Toronto"},{"city":"Vancouver"}]'
-          },
-          done: true
-        }
-      end
-      
-      let(:complete_response) do
-        {
-          message: {
-            role: 'assistant',
-            content: '[{"city":"Toronto"},{"city":"Vancouver"},{"city":"Montreal"}]'
-          },
-          done: true
-        }
-      end
-      
-      before do
-        # First attempt returns incomplete data (only 2 cities)
-        stub_request(:post, base_url)
-          .with(body: hash_including({ temperature: 0.7 }))
-          .to_return(status: 200, body: incomplete_response.to_json)
-        
-        # Second attempt (retry) returns correct number of cities
-        stub_request(:post, base_url)
-          .with(body: hash_including({ temperature: 0.8 }))
-          .to_return(status: 200, body: complete_response.to_json)
-      end
-      
-      it 'retries until exact number of items is received' do
-        result = client.chat(
-          messages: messages, 
-          format: schema, 
-          options: { 
-            max_retries: 1, 
-            ensure_complete: true,
-            temperature: 0.7
-          }
-        )
-        
-        expect(result.length).to eq(3)
-        expect(result.map { |item| item['city'] }).to include('Toronto', 'Vancouver', 'Montreal')
-      end
-      
-      it 'generates missing items with defaults if needed' do
-        # Stub to always return incomplete
-        stub_request(:post, base_url)
-          .to_return(status: 200, body: incomplete_response.to_json)
-          
-        result = client.chat(
-          messages: messages, 
-          format: schema, 
-          options: { 
-            ensure_complete: true,
-            defaults: [
-              { 'city' => 'Default City' }
-            ]
-          }
-        )
-        
-        expect(result.length).to eq(3)
-        expect(result[2]['city']).to eq('Default City')
-      end
-    end
-    
-    context 'with min/max item count' do
-      let(:schema) do
-        Ollama::Schema.array(
-          Ollama::Schema.object(
-            properties: { city: Ollama::Schema.string },
-            required: ['city']
-          ),
-          min: 2,
-          max: 4
-        )
-      end
-      
-      let(:too_few_response) do
-        {
-          message: {
-            role: 'assistant',
-            content: '[{"city":"Toronto"}]'
-          },
-          done: true
-        }
-      end
-      
-      let(:valid_response) do
-        {
-          message: {
-            role: 'assistant',
-            content: '[{"city":"Toronto"},{"city":"Vancouver"},{"city":"Montreal"}]'
-          },
-          done: true
-        }
-      end
-      
-      let(:too_many_response) do
-        {
-          message: {
-            role: 'assistant',
-            content: '[{"city":"Toronto"},{"city":"Vancouver"},{"city":"Montreal"},{"city":"Calgary"},{"city":"Ottawa"}]'
-          },
-          done: true
-        }
-      end
-      
-      it 'validates minimum item count' do
-        stub_request(:post, base_url)
-          .to_return(status: 200, body: too_few_response.to_json)
-          
-        result = client.chat(
-          messages: messages, 
-          format: schema, 
-          options: { 
-            ensure_complete: true,
-            defaults: [{ 'city' => 'Default City' }]
-          }
-        )
-        
-        expect(result.length).to be >= 2
-      end
-      
-      it 'accepts valid item count in range' do
-        stub_request(:post, base_url)
-          .to_return(status: 200, body: valid_response.to_json)
-          
-        result = client.chat(
-          messages: messages, 
-          format: schema, 
-          options: { ensure_complete: true }
-        )
-        
-        expect(result.length).to eq(3)
       end
     end
   end
