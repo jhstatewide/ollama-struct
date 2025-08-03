@@ -46,7 +46,7 @@ gem install ollama-struct
 
 Replace `USERNAME` with your GitHub username and `TOKEN` with a personal access token that has `read:packages` scope.
 
-**Note:** While the gem is published to GitHub Packages, there are known issues with gem file downloads that may cause installation to fail. The GitHub repository method above is recommended for reliable installation.
+**Note:** The gem is published to GitHub Packages, but there are currently issues with gem file downloads that prevent successful installation. The GitHub repository method above is the recommended and most reliable installation method.
 
 Alternatively, you can clone the repository and install locally:
 
