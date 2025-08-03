@@ -22,14 +22,18 @@ Working with LLMs often means dealing with unpredictable, free-form text. When y
 
 Add to your Gemfile:
 
+### Installation
+
+To install `ollama-struct` directly from GitHub, add the following to your Gemfile:
+
 ```ruby
-gem 'ollama-struct'
+gem 'ollama-struct', git: 'https://github.com/jhstatewide/ollama-struct.git', branch: 'master'
 ```
 
 Or install directly:
 
 ```bash
-gem install ollama-struct
+gem install ollama-struct --source https://github.com/jhstatewide/ollama-struct.git
 ```
 
 ### Basic Usage
