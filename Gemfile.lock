@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    ollama-struct (0.1.7)
+    ollama-struct (0.1.8)
       ostruct (~> 0.5)
 
 GEM
@@ -39,7 +39,7 @@ GEM
 
 PLATFORMS
   ruby
-  x86_64-linux-gnu
+  x86_64-linux
 
 DEPENDENCIES
   ollama-struct!
