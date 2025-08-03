@@ -41,7 +41,7 @@ jobs:
         curl -X PATCH \
           -H "Authorization: Bearer ${{secrets.GITHUB_TOKEN}}" \
           -H "Accept: application/vnd.github.v3+json" \
-          https://api.github.com/user/packages/rubygems/ollama-struct \
+          https://api.github.com/user/packages/rubygems/ollama-struct/visibility \
           -d '{"visibility":"public"}'
 
     # - name: Publish to RubyGems
