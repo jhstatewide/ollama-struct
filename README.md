@@ -20,7 +20,7 @@ Working with LLMs often means dealing with unpredictable, free-form text. When y
 
 ### Installation
 
-**Note:** This gem is published on GitHub Packages as a public package. You can install it directly from the GitHub repository or from GitHub Packages.
+**Note:** This gem is published on GitHub Packages but requires authentication. You can install it directly from the GitHub repository.
 
 Add to your Gemfile:
 
@@ -34,13 +34,13 @@ Or install directly:
 gem install ollama-struct --source https://github.com/jhstatewide/ollama-struct.git
 ```
 
-**To install from GitHub Packages (public package):**
+**To install from GitHub Packages (requires authentication):**
 
 ```bash
 # Add GitHub Packages as a source
 gem sources --add https://rubygems.pkg.github.com/jhstatewide
 
-# Install the gem (no authentication required)
+# Install the gem (you'll need to authenticate with GitHub)
 gem install ollama-struct
 ```
 
