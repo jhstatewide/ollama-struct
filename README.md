@@ -34,15 +34,17 @@ Or install directly:
 gem install ollama-struct --source https://github.com/jhstatewide/ollama-struct.git
 ```
 
-**To install from GitHub Packages (requires authentication):**
+**To install from GitHub Packages (requires authentication even for public packages):**
 
 ```bash
-# Add GitHub Packages as a source
-gem sources --add https://rubygems.pkg.github.com/jhstatewide
+# Add GitHub Packages as a source with authentication
+gem sources --add https://USERNAME:TOKEN@rubygems.pkg.github.com/jhstatewide
 
-# Install the gem (you'll need to authenticate with GitHub)
+# Install the gem
 gem install ollama-struct
 ```
+
+Replace `USERNAME` with your GitHub username and `TOKEN` with a personal access token that has `read:packages` scope.
 
 Alternatively, you can clone the repository and install locally:
 
