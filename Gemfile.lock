@@ -1,7 +1,7 @@
 PATH
   remote: .
   specs:
-    ollama-struct (0.1.5)
+    ollama-struct (0.1.6)
       ostruct (~> 0.5)
 
 GEM
