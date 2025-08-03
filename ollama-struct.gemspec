@@ -3,7 +3,7 @@
 
 Gem::Specification.new do |spec|
   spec.name          = "ollama-struct"
-  spec.version       = "0.1.7"
+  spec.version       = "0.1.8"
   spec.authors       = ["Joshua Harding"]
   spec.email         = ["josh@statewidesoftware.com"]
 
