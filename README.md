@@ -20,11 +20,9 @@ Working with LLMs often means dealing with unpredictable, free-form text. When y
 
 ### Installation
 
+**Note:** This gem is published on GitHub Packages as a public package. You can install it directly from the GitHub repository or from GitHub Packages.
+
 Add to your Gemfile:
-
-### Installation
-
-To install `ollama-struct` directly from GitHub, add the following to your Gemfile:
 
 ```ruby
 gem 'ollama-struct', git: 'https://github.com/jhstatewide/ollama-struct.git', branch: 'master'
@@ -36,6 +34,24 @@ Or install directly:
 gem install ollama-struct --source https://github.com/jhstatewide/ollama-struct.git
 ```
 
+**To install from GitHub Packages (public package):**
+
+```bash
+# Add GitHub Packages as a source
+gem sources --add https://rubygems.pkg.github.com/jhstatewide
+
+# Install the gem (no authentication required)
+gem install ollama-struct
+```
+
+Alternatively, you can clone the repository and install locally:
+
+```bash
+git clone https://github.com/jhstatewide/ollama-struct.git
+cd ollama-struct
+bundle install
+```
+
 ### Basic Usage
 
 Here's a simple example that gets structured information about a country:
@@ -44,7 +60,7 @@ Here's a simple example that gets structured information about a country:
 require 'ollama/struct'
 
 # Create a client
-client = Ollama::Struct.new(model: 'llama3')
+client = Ollama::Struct.new(model: 'llama3.2')
 
 # Define your schema (what structure you want back)
 country_schema = Ollama::Schema.object(
@@ -75,6 +91,8 @@ puts "Languages: #{result['languages'].join(', ')}"
 ### 1. Generating a Character for an RPG Game
 
 The included [character_generator.rb](./examples/character_generator.rb) example shows how to create a fully-fledged RPG character with attributes, abilities, equipment, and backstory:
+
+> **Note:** The examples use additional gems for formatting and display. They will automatically install required dependencies when run.
 
 ```bash
 # Basic usage
@@ -156,7 +174,7 @@ client.chat(
 ### Ollama Setup
 
 1. [Install Ollama](https://ollama.ai/download) on your system or a server in your network
-2. Install the models you want to use: `ollama pull llama3`
+2. Install the models you want to use: `ollama pull llama3.2`
 3. Ensure the Ollama server is running before using this gem
 
 ## Contributing

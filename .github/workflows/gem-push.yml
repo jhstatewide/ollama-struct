@@ -36,6 +36,14 @@ jobs:
         GEM_HOST_API_KEY: "Bearer ${{secrets.GITHUB_TOKEN}}"
         OWNER: ${{ github.repository_owner }}
 
+    - name: Make package public
+      run: |
+        curl -X PATCH \
+          -H "Authorization: Bearer ${{secrets.GITHUB_TOKEN}}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          https://api.github.com/user/packages/rubygems/ollama-struct \
+          -d '{"visibility":"public"}'
+
     # - name: Publish to RubyGems
     #   run: |
     #     mkdir -p $HOME/.gem
