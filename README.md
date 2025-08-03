@@ -20,7 +20,7 @@ Working with LLMs often means dealing with unpredictable, free-form text. When y
 
 ### Installation
 
-**Note:** This gem is published on GitHub Packages but requires authentication. You can install it directly from the GitHub repository.
+**Note:** This gem is available directly from the GitHub repository. While it's also published on GitHub Packages, that method requires authentication and is less convenient.
 
 Add to your Gemfile:
 
@@ -34,7 +34,7 @@ Or install directly:
 gem install ollama-struct --source https://github.com/jhstatewide/ollama-struct.git
 ```
 
-**To install from GitHub Packages (requires authentication even for public packages):**
+**To install from GitHub Packages (requires authentication):**
 
 ```bash
 # Add GitHub Packages as a source with authentication
@@ -45,6 +45,8 @@ gem install ollama-struct
 ```
 
 Replace `USERNAME` with your GitHub username and `TOKEN` with a personal access token that has `read:packages` scope.
+
+**Note:** We cannot verify this method works without authentication credentials, so the GitHub repository method above is recommended.
 
 Alternatively, you can clone the repository and install locally:
 
